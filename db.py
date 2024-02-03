@@ -1,0 +1,2 @@
+shops = {}
+products = {}
