@@ -1,9 +1,11 @@
 from flask import request, jsonify
 import uuid
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from flask.views import MethodView
 from flask_smorest import Blueprint, abort
-from db import products
+from db import db
 from schemas import ProductSchema, ProductUpdateSchema
+from models import ProductModel
 
 blueprint = Blueprint('product', __name__, description='Operations on Products')
 
@@ -11,57 +13,54 @@ blueprint = Blueprint('product', __name__, description='Operations on Products')
 class Product(MethodView):
     @blueprint.response(200, ProductSchema)
     def get(self, product_id):
-        try:
-        # Attempt to retrieve the product details using the product_id as the key
-            return jsonify(products[product_id])
-        except KeyError:
-        # Return a message and status code 404 if the product is not found
-            return jsonify({"message": "Product not found"}), 404
+        product = ProductModel.query.get_or_404(product_id)
+        return product
 
 
     @blueprint.arguments(ProductUpdateSchema)
     @blueprint.response(200, ProductSchema)
     def put(self, product_data, product_id):
-         # Get the product data from the request JSON
-        product_data = request.json
-    
+        product = ProductModel.query.get_or_404(product_id)
+        
+        if product:
+            product.price = product_data.get('price', product.price)
+            product.name = product_data.get('name', product.name)
+        else:
+            product = ProductModel(id=product_id, **product_data)
         try:
-        # Attempt to update the product using the product_id as the key
-        # |= merge the dictionaries
-            products[product_id] |= product_data
-            return jsonify(products[product_id])
-        except KeyError:
-        # Return a message and status code 404 if the product is not found
-            return jsonify({"message": "Product not found"}), 404
+            db.session.add(product)
+            db.session.commit()
+        except IntegrityError:
+            abort(400, message="A Product with that name already exists")
+        except SQLAlchemyError:
+            abort(500, message="An error occurred while inserting the product")
+
+        return product
 
 
     def delete(self, product_id):
-        try:
-        # Attempt to delete the product using the product_id as the key
-            del products[product_id]
-            return jsonify({"message": "Product deleted successfully"})
-        except KeyError:
-        # Return a message and status code 404 if the product is not found
-            return jsonify({"message": "Product not found"}), 404
+        product = ProductModel.query.get_or_404(product_id)
+        db.session.delete(product)
+        db.session.commit()
+        return jsonify({'message': 'Product deleted'})
 
 @blueprint.route('/product')
 class ProductList(MethodView):
     @blueprint.response(200, ProductSchema(many=True))
     def get(self):
-        return jsonify(list(products.values()))
+        return ProductModel.query.all()
     
     @blueprint.arguments(ProductSchema)
     @blueprint.response(201, ProductSchema)
     def post(self, new_product):
+        product = ProductModel(**new_product)
+        
+        try:
+            db.session.add(product)
+            db.session.commit()
+        except IntegrityError:
+            abort(400, message="A shop with that name already exists")
+        except SQLAlchemyError:
+            abort(500, message="An error occurred while inserting the product")
 
-        product_data = request.json
-        product_id = uuid.uuid4().hex
-
-        for product in products.values():
-            if product_data['name'] == product['name']:
-                abort(400, message="Product already exists")
-
-
-        product = {**product_data, 'id': product_id}
-        products[product_id] = product
         return product
